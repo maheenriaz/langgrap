@@ -17,6 +17,12 @@ import requests # type: ignore
 import os
 import logging
 import tempfile
+import pickle
+import shutil
+
+FAISS_DIR = "faiss_indexes"
+os.makedirs(FAISS_DIR, exist_ok=True)
+
 
 logging.basicConfig(level=logging.INFO)
 os.environ["LANGCHAIN_TRACING_V2"] = "true"
@@ -36,9 +42,13 @@ embeddings = OllamaEmbeddings(model="nomic-embed-text")
 _THREAD_RETRIEVERS: Dict[str, Any] = {}
 
 def _get_retriever(thread_id: Optional[str]):
-    if thread_id and thread_id in _THREAD_RETRIEVERS:
+    if not thread_id:
+        return None
+
+    if thread_id in _THREAD_RETRIEVERS:
         return _THREAD_RETRIEVERS[thread_id]
-    return None
+
+    return load_thread_retriever(thread_id)
 
 # -------------------
 # 3. Tools
@@ -206,7 +216,7 @@ graph.add_node('tools', tool_node)
 
 graph.add_edge(START, 'routing')
 graph.add_conditional_edges('routing', tools_condition)
-graph.add_edge('tools', 'routing')
+graph.add_edge('tools', END)
 
 workflow = graph.compile(checkpointer=checkpointer)
 
@@ -277,7 +287,13 @@ def ingest_pdf(file_bytes: bytes, thread_id: str, filename: Optional[str] = None
         chunks = splitter.split_documents(docs)
 
         vectorstore = FAISS.from_documents(chunks, embeddings)
-        retriever = vectorstore.as_retriever(search_kwargs={"k": 4})
+        faiss_path = get_faiss_path(thread_id)
+
+        vectorstore.save_local(faiss_path)
+
+        retriever = vectorstore.as_retriever(
+            search_kwargs={"k": 4}
+        )
 
         _THREAD_RETRIEVERS[str(thread_id)] = retriever
 
@@ -296,7 +312,10 @@ def ingest_pdf(file_bytes: bytes, thread_id: str, filename: Optional[str] = None
 
 def remove_thread_document(thread_id: str):
     """Retriever memory se hatata hai, aur DB mein PDF-related fields clear karta hai (thread_name preserve hota hai)."""
-    _THREAD_RETRIEVERS.pop(str(thread_id), None)
+    faiss_path = get_faiss_path(thread_id)
+
+    if os.path.exists(faiss_path):
+        shutil.rmtree(faiss_path)
 
     cursor = conn.cursor()
     cursor.execute("""
@@ -312,3 +331,34 @@ def clear_thread_checkpoint(thread_id: str):
     cursor.execute("DELETE FROM checkpoints WHERE thread_id = ?", (str(thread_id),))
     cursor.execute("DELETE FROM writes WHERE thread_id = ?", (str(thread_id),))
     conn.commit()
+
+
+def get_faiss_path(thread_id: str):
+    return os.path.join(FAISS_DIR, str(thread_id))
+
+
+    
+def load_thread_retriever(thread_id: str):
+    try:
+        faiss_path = get_faiss_path(thread_id)
+
+        if not os.path.exists(faiss_path):
+            return None
+
+        vectorstore = FAISS.load_local(
+            faiss_path,
+            embeddings,
+            allow_dangerous_deserialization=True
+        )
+
+        retriever = vectorstore.as_retriever(
+            search_kwargs={"k": 4}
+        )
+
+        _THREAD_RETRIEVERS[str(thread_id)] = retriever
+
+        return retriever
+
+    except Exception as e:
+        print("FAISS Load Error:", e)
+        return None

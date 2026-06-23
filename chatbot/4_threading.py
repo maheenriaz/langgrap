@@ -40,6 +40,14 @@ if 'chat_threads' not in st.session_state:
 
 add_thread(st.session_state['thread_id'])
 
+print("Current thread_id:", st.session_state['thread_id'])
+print("Current chat_threads:", st.session_state['chat_threads'])
+print("Current message_history:", st.session_state['message_history'])
+print("Current session_state:", st.session_state)
+print("Current session_state keys:", list(st.session_state.keys()))
+print("Current session_state items:", list(st.session_state.items()))
+print("Current session_state thread_id:", st.session_state.get('thread_id'))
+print("Current session_state chat_threads:", st.session_state.get('chat_threads'))
 # -------------------
 # Sidebar UI
 # -------------------
@@ -84,18 +92,18 @@ with upload_container:
     uploaded_file = st.file_uploader("Attach a PDF", type=["pdf"])
 
     if uploaded_file is not None:
-        st.success(f"✅ {uploaded_file.name} uploaded")
+        # st.success(f"✅ {uploaded_file.name} uploaded")
         result = ingest_pdf(uploaded_file.read(), current_tid, uploaded_file.name)
-        if result["success"]:
-            st.info(f"📄 {uploaded_file.name} ready! ({result['pages']} pages, {result['chunks']} chunks)")
-        else:
-            st.error(f"❌ Error: {result['error']}")
+        # if result["success"]:
+        #     st.info(f"📄 {uploaded_file.name} ready! ({result['pages']} pages, {result['chunks']} chunks)")
+        # else:
+        #     st.error(f"❌ Error: {result['error']}")
     else:
-        st.warning("📄 No PDF attached (removed or not uploaded)")
+        # st.warning("📄 No PDF attached (removed or not uploaded)")
         if thread_has_document(current_tid):
             remove_thread_document(current_tid)
             clear_thread_checkpoint(current_tid)
-            st.info("🗑️ Document context cleared for this thread")
+            # st.info("🗑️ Document context cleared for this thread")
 
 user_input = st.chat_input("Type here...")
 
