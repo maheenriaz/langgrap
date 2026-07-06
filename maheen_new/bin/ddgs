@@ -1,6 +1,0 @@
-#!/Users/owaisyameen/Desktop/langgraph/maheen_new/bin/python3.11
-import sys
-from ddgs.cli import safe_entry_point
-if __name__ == '__main__':
-    sys.argv[0] = sys.argv[0].removesuffix('.exe')
-    sys.exit(safe_entry_point())

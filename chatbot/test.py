@@ -1,13 +1,13 @@
-# test_stream.py
-from langgraph_backend import workflow
-from langchain_core.messages import HumanMessage
+import sqlite3
 
-config = {"configurable": {"thread_id": "test123"}}
-stream = workflow.stream(
-    {"message": [HumanMessage(content="hi")]},
-    config=config,
-    stream_mode="messages"
+conn = sqlite3.connect("chatbot.db")
+
+conn.execute("""
+CREATE TABLE IF NOT EXISTS test (
+    id INTEGER
 )
+""")
 
-for chunk, metadata in stream:
-    print(type(chunk), repr(chunk.content))
+conn.commit()
+
+print("OK")

@@ -118,6 +118,14 @@ def rag_tool(query: str, thread_id: Optional[str] = None) -> dict:
     Retrieve relevant information from the uploaded PDF for this chat thread.
     Use this when user asks questions about the uploaded document.
     Always include the thread_id when calling this tool.
+    Do NOT include:
+    - Sources
+    - File names
+    - Page numbers
+    - References
+    - Citations
+
+    Return only the final answer.
     """
     retriever = _get_retriever(thread_id)
     if retriever is None:
@@ -138,6 +146,20 @@ def rag_tool(query: str, thread_id: Optional[str] = None) -> dict:
 tools = [search_tool, get_stock_price, calculator, rag_tool]
 llm_with_tools = llm.bind_tools(tools)
 
+
+# ✅ ye naya function add karo
+def strip_sources(text: str) -> str:
+    """Model ke response se 'Sources:'/'References:' wala section hata do"""
+    if not text:
+        return text
+    cleaned = re.split(
+        r'\n?\s*\**\s*(Sources?|References?|Citations?)\s*\**\s*:',
+        text,
+        flags=re.IGNORECASE
+    )[0]
+    return cleaned.strip()
+
+
 # -------------------
 # 4. State
 # -------------------
@@ -154,15 +176,30 @@ def generate_chat(state: ChatSchema, config=None) -> ChatSchema:
 
     system_message = SystemMessage(
         content=(
-            "You are a helpful assistant. "
-            "For questions about uploaded PDF, call `rag_tool` with the thread_id "
-            f"`{thread_id}`. "
-            "You can also use web search, stock price, and calculator tools."
-            "If no document is uploaded, ask user to upload a PDF."
+               "You are a helpful assistant.\n\n"
+
+        "For questions about an uploaded PDF, call `rag_tool` with the thread_id.\n"
+        "You can also use web search, stock price, and calculator tools.\n"
+        "If no document is uploaded, ask the user to upload one.\n\n"
+
+        "IMPORTANT:\n"
+        "- Answer naturally.\n"
+        "- Do NOT include Sources.\n"
+        "- Do NOT include file names.\n"
+        "- Do NOT include page numbers.\n"
+        "- Do NOT include references or citations.\n"
+        "- Return only the final answer.\n"
         )
     )
     messages = [system_message, *state["messages"]]
     response = llm_with_tools.invoke(messages, config=config)
+
+    # ✅ ye naya block add karo — sirf final text response pe apply hoga, tool-call pe nahi
+    if isinstance(response, AIMessage) and response.content and not response.tool_calls:
+        response.content = strip_sources(response.content)
+
+    logging.info(f"[LLM RESPONSE] {response}")
+
     return {"messages": [response]}
 
 tool_node = ToolNode(tools)
@@ -195,6 +232,8 @@ def retrive_unique_thread():
         all_thread.add(checkpoint.config['configurable']['thread_id'])
     return list(all_thread)
 
+logging.info(f"slslslsl {retrive_unique_thread()}")
+# print("slslslsl",retrive_unique_thread())
 def thread_has_document(thread_id: str) -> bool:
     return str(thread_id) in _THREAD_RETRIEVERS
 
