@@ -1,8 +1,7 @@
 import logging
 import streamlit as st
 from langgraph_database_backend import (
-    workflow, retrive_unique_thread,
-    ingest_pdf, thread_has_document, thread_document_metadata,
+    workflow, retrive_unique_thread, thread_has_document, thread_document_metadata,
     save_thread_metadata, remove_thread_document,
     clear_thread_checkpoint,
     DEFAULT_USER_ID, get_all_user_memories, delete_user_memory,
@@ -105,11 +104,11 @@ with st.sidebar.expander("🧠 What I remember about you"):
 # -------------------
 # Main Chat UI
 # -------------------
-st.title("🤖 AI Research Assistant by Maheen")
+st.title("🤖 AI Research Assistant")
 
 for message in st.session_state["message_history"]:
     with st.chat_message(message["role"]):
-        st.text(message["content"])
+        st.markdown(message["content"])
 
 # upload_container = st.container()
 # with upload_container:
@@ -192,14 +191,17 @@ if user_input:
                 streamed_text = streamed_text[:match.start()].rstrip()
                 sources_cutoff = True
 
-            placeholder.text(streamed_text)
-            st.session_state["message_history"].append({
+            placeholder.markdown(streamed_text)
+        st.session_state["message_history"].append({
                     "role": "assistant",
                     "content": streamed_text
-            })
+        })
 
     # Pehla user message ke baad thread ka naam DB mein save karo (persistent), phir rerun karo
     # taake sidebar turant updated naam aur naya memory (agar koi save hua ho) dikhaye
     if len(st.session_state["message_history"]) == 2:
-        save_thread_metadata(current_tid, {"thread_name": user_input[:30]})
+        try:
+            save_thread_metadata(current_tid, {"thread_name": user_input[:30]})
+        except Exception as e:
+            logging.error(f"[THREAD NAME] failed to save: {e}")
         st.rerun()

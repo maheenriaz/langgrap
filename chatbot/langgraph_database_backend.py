@@ -40,7 +40,7 @@ load_dotenv()
 # -------------------
 # 1. LLM + Embeddings
 # -------------------
-llm = ChatOllama(model="qwen2.5:7b")
+llm = ChatOllama(model="qwen2.5:0.5b")
 embeddings = OllamaEmbeddings(model="nomic-embed-text")
 
 # Fixed single user_id - single-user app hai, isliye sab threads isi user ki memory share karenge
@@ -51,14 +51,14 @@ DEFAULT_USER_ID = "u1"
 # -------------------
 _THREAD_RETRIEVERS: Dict[str, Any] = {}
 
-def _get_retriever(thread_id: Optional[str]):
-    if not thread_id:
-        return None
+# def _get_retriever(thread_id: Optional[str]):
+#     if not thread_id:
+#         return None
 
-    if thread_id in _THREAD_RETRIEVERS:
-        return _THREAD_RETRIEVERS[thread_id]
+#     if thread_id in _THREAD_RETRIEVERS:
+#         return _THREAD_RETRIEVERS[thread_id]
 
-    return load_thread_retriever(thread_id)
+#     return load_thread_retriever(thread_id)
 
 # -------------------
 # 3. Tools
@@ -100,30 +100,30 @@ def get_stock_price(symbol: str) -> dict:
     print(f"[TOOL CALLED] Stock Price -> {symbol}")
     return r.json()
 
-@tool
-def rag_tool(query: str, thread_id: Optional[str] = None) -> dict:
-    """
-    A PDF has been uploaded for this conversation.
-        ALWAYS use rag_tool first for any user question.
-        Answer only from the document when possible.
-    """
-    retriever = _get_retriever(thread_id)
-    if retriever is None:
-        return {
-            "error": "No document indexed for this chat. Upload a PDF first.",
-            "query": query,
-        }
-    result = retriever.invoke(query)
-    context = [doc.page_content for doc in result]
-    metadata = [doc.metadata for doc in result]
-    return {
-        "query": query,
-        "context": context,
-        "metadata": metadata,
-        "source_file": thread_document_metadata(str(thread_id)).get("filename"),
-    }
+# @tool
+# def rag_tool(query: str, thread_id: Optional[str] = None) -> dict:
+#     """
+#     A PDF has been uploaded for this conversation.
+#         ALWAYS use rag_tool first for any user question.
+#         Answer only from the document when possible.
+#     """
+#     retriever = _get_retriever(thread_id)
+#     if retriever is None:
+#         return {
+#             "error": "No document indexed for this chat. Upload a PDF first.",
+#             "query": query,
+#         }
+#     result = retriever.invoke(query)
+#     context = [doc.page_content for doc in result]
+#     metadata = [doc.metadata for doc in result]
+#     return {
+#         "query": query,
+#         "context": context,
+#         "metadata": metadata,
+#         "source_file": thread_document_metadata(str(thread_id)).get("filename"),
+#     }
 
-tools = [search_tool, get_stock_price, calculator, rag_tool]
+tools = [search_tool, get_stock_price, calculator]
 llm_with_tools = llm.bind_tools(tools)
 
 # -------------------
@@ -144,7 +144,7 @@ class MemoryDecision(BaseModel):
     should_write: bool = Field(description="True agar koi naya memory-worthy fact mila ho is message mein")
     memories: List[MemoryItem] = Field(default_factory=list)
 
-memory_llm = ChatOllama(model="qwen2.5:7b")
+memory_llm = ChatOllama(model="qwen2.5:0.5b")
 memory_extractor = memory_llm.with_structured_output(MemoryDecision)
 
 MEMORY_PROMPT = """You are responsible for maintaining accurate long-term memory about the user.
@@ -189,6 +189,7 @@ def extract_and_store_memory(store: BaseStore, user_id: str, last_text: str):
     existing = _get_user_memory_text(store, user_id)
 
     try:
+        # llm calling
         decision: MemoryDecision = memory_extractor.invoke([
             SystemMessage(content=MEMORY_PROMPT.format(user_details_content=existing)),
             {"role": "user", "content": last_text},
@@ -217,7 +218,7 @@ def remember_node(state: ChatSchema, config: RunnableConfig, *, store: BaseStore
     user_id = config.get("configurable", {}).get("user_id", DEFAULT_USER_ID)
     last_text = state["messages"][-1].content
 
-    if isinstance(last_text, str) and last_text.strip():
+    if isinstance(last_text, str) and len(last_text.strip()) >= 4: # chhoti greetings ya "ok" ignore karo
         extract_and_store_memory(store, user_id, last_text)
 
     return {}
@@ -239,25 +240,25 @@ def routing(state: ChatSchema, config: RunnableConfig = None, *, store: BaseStor
     memory_block = SYSTEM_PROMPT_MEMORY_BLOCK.format(user_details_content=user_memory_text)
 
     # --- Thread-specific PDF check (pehle) ---
-    if thread_has_document(str(thread_id)):
-        classify_prompt = f"""You are a query router. A PDF document is uploaded in this conversation.
-Reply with ONLY one word — document or tool.
-User question: {user_query}
-Reply:"""
-        intent = llm.invoke(classify_prompt).content.strip().lower()
+#     if thread_has_document(str(thread_id)):
+#         classify_prompt = f"""You are a query router. A PDF document is uploaded in this conversation.
+# Reply with ONLY one word — document or tool.
+# User question: {user_query}
+# Reply:"""
+#         intent = llm.invoke(classify_prompt).content.strip().lower()
 
-        if "document" in intent:
-            rag_result = rag_tool.invoke({"query": user_query, "thread_id": str(thread_id)})
-            if "error" not in rag_result:
-                context = "\n\n".join(rag_result["context"])
-                response = llm.invoke(f"""You are a helpful assistant.
-Answer ONLY from the provided PDF context.
-{memory_block}
-Context:
-{context}
-Question:
-{user_query}""")
-                return {"messages": [response]}
+#         if "document" in intent:
+#             rag_result = rag_tool.invoke({"query": user_query, "thread_id": str(thread_id)})
+#             if "error" not in rag_result:
+#                 context = "\n\n".join(rag_result["context"])
+#                 response = llm.invoke(f"""You are a helpful assistant.
+# Answer ONLY from the provided PDF context.
+# {memory_block}
+# Context:
+# {context}
+# Question:
+# {user_query}""")
+#                 return {"messages": [response]}
 
     # --- Global FAISS index check (dusra fallback) ---
     # --- Global FAISS index check (dusra fallback) ---
@@ -276,13 +277,6 @@ Question:
             docs = _GLOBAL_RETRIEVER.invoke(user_query)
             if docs:
                 context = "\n\n".join(doc.page_content for doc in docs)
-                citations = []
-                for doc in docs:
-                    src = doc.metadata.get("source", "document")
-                    page = doc.metadata.get("page", 0)
-                    citations.append(f"{os.path.basename(src)}, page {int(page)+1}")
-                citation_text = "\n".join(f"- {c}" for c in set(citations))
-
                 response = llm.invoke(f"""You are a helpful banking assistant.
     Answer ONLY from the provided document context. If the answer is not in the context, say "I don't have this information in the available documents."
     Be concise and precise.
@@ -293,18 +287,10 @@ Question:
 
     Question:
     {user_query}
-
-    At the end of your answer, add:
-    Sources:
-    {citation_text}""")
+""")
                 print(f"[GLOBAL FAISS] Answered from global index for query: {user_query},{response}")
                 return {"messages": [response]}
-    
-    
-    
-    
-    
-    
+        
     # --- Tools fallback (web search, calculator, stock) ---
     system_message = SystemMessage(
                     content=f"""You are a helpful assistant.
@@ -448,37 +434,37 @@ def save_thread_metadata(thread_id: str, metadata: dict):
     conn.commit()
     return existing
 
-def ingest_pdf(file_bytes: bytes, thread_id: str, filename: Optional[str] = None) -> dict:
-    """PDF ko read karke FAISS mein store karo (disk pe persistent), aur metadata DB mein save karo."""
-    try:
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
-            tmp.write(file_bytes)
-            tmp_path = tmp.name
+# def ingest_pdf(file_bytes: bytes, thread_id: str, filename: Optional[str] = None) -> dict:
+    # """PDF ko read karke FAISS mein store karo (disk pe persistent), aur metadata DB mein save karo."""
+    # try:
+    #     with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+    #         tmp.write(file_bytes)
+    #         tmp_path = tmp.name
 
-        loader = PyPDFLoader(tmp_path)
-        docs = loader.load()
-        splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
-        chunks = splitter.split_documents(docs)
+    #     loader = PyPDFLoader(tmp_path)
+    #     docs = loader.load()
+    #     splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
+    #     chunks = splitter.split_documents(docs)
 
-        vectorstore = FAISS.from_documents(chunks, embeddings)
-        faiss_path = get_faiss_path(thread_id)
-        vectorstore.save_local(faiss_path)
+    #     vectorstore = FAISS.from_documents(chunks, embeddings)
+    #     faiss_path = get_faiss_path(thread_id)
+    #     vectorstore.save_local(faiss_path)
 
-        retriever = vectorstore.as_retriever(search_kwargs={"k": 4})
-        _THREAD_RETRIEVERS[str(thread_id)] = retriever
+    #     retriever = vectorstore.as_retriever(search_kwargs={"k": 4})
+    #     _THREAD_RETRIEVERS[str(thread_id)] = retriever
 
-        # Metadata DB mein save - thread_name preserve hota hai (merge logic save_thread_metadata mein hai)
-        save_thread_metadata(str(thread_id), {
-            "filename": filename or "uploaded.pdf",
-            "chunks": len(chunks),
-            "pages": len(docs)
-        })
+    #     # Metadata DB mein save - thread_name preserve hota hai (merge logic save_thread_metadata mein hai)
+    #     save_thread_metadata(str(thread_id), {
+    #         "filename": filename or "uploaded.pdf",
+    #         "chunks": len(chunks),
+    #         "pages": len(docs)
+    #     })
 
-        os.unlink(tmp_path)
-        return {"success": True, "chunks": len(chunks), "pages": len(docs)}
+    #     os.unlink(tmp_path)
+    #     return {"success": True, "chunks": len(chunks), "pages": len(docs)}
 
-    except Exception as e:
-        return {"success": False, "error": str(e)}
+    # except Exception as e:
+    #     return {"success": False, "error": str(e)}
 
 
 def remove_thread_document(thread_id: str):
@@ -507,27 +493,27 @@ def clear_thread_checkpoint(thread_id: str):
 def get_faiss_path(thread_id: str):
     return os.path.join(FAISS_DIR, str(thread_id))
 
-def load_thread_retriever(thread_id: str):
-    try:
-        faiss_path = get_faiss_path(thread_id)
+# def load_thread_retriever(thread_id: str):
+#     try:
+#         faiss_path = get_faiss_path(thread_id)
 
-        if not os.path.exists(faiss_path):
-            return None
+#         if not os.path.exists(faiss_path):
+#             return None
 
-        vectorstore = FAISS.load_local(
-            faiss_path,
-            embeddings,
-            allow_dangerous_deserialization=True
-        )
+#         vectorstore = FAISS.load_local(
+#             faiss_path,
+#             embeddings,
+#             allow_dangerous_deserialization=True
+#         )
 
-        retriever = vectorstore.as_retriever(search_kwargs={"k": 4})
-        _THREAD_RETRIEVERS[str(thread_id)] = retriever
+#         retriever = vectorstore.as_retriever(search_kwargs={"k": 4})
+#         _THREAD_RETRIEVERS[str(thread_id)] = retriever
 
-        return retriever
+#         return retriever
 
-    except Exception as e:
-        print("FAISS Load Error:", e)
-        return None
+#     except Exception as e:
+#         print("FAISS Load Error:", e)
+#         return None
 
 # -------------------
 # 10. Long-Term Memory helpers (explicit access - UI ya manual "remember that..." commands ke liye)
