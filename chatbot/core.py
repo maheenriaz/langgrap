@@ -1,79 +1,87 @@
-print("1")
 import os
 
-print("2")
-from langchain_community.document_loaders import PyPDFLoader
-
-print("3")
+from langchain_text_splitters import (
+    MarkdownHeaderTextSplitter,
+    RecursiveCharacterTextSplitter,
+)
 from langchain_community.vectorstores import FAISS
-
-print("4")
-from langchain_text_splitters import RecursiveCharacterTextSplitter
-
-print("5")
 from langchain_ollama import OllamaEmbeddings
 
-print("6")
-
-# -----------------------------
-# Configuration
-# -----------------------------
-PDF_FOLDER = "./pdf"
-
+MD_FOLDER = "./pdf"
 FAISS_FOLDER = "./faiss_indexes"
-
-print("Creating embedding object")
 
 embeddings = OllamaEmbeddings(model="nomic-embed-text")
 
-print("Embedding object created")
+headers_to_split_on = [
+    ("#", "H1"),
+    ("##", "H2"),
+    ("###", "H3"),
+]
 
-# -----------------------------
-# Load all PDFs
-# -----------------------------
-documents = []
-
-print("Loading PDFs...\n")
-
-for file in os.listdir(PDF_FOLDER):
-    if file.lower().endswith(".pdf"):
-        pdf_path = os.path.join(PDF_FOLDER, file)
-
-        print(f"Reading: {file}")
-
-        loader = PyPDFLoader(pdf_path)
-        docs = loader.load()
-
-        # filename metadata add kar do
-        for d in docs:
-            d.metadata["source_file"] = file
-
-        documents.extend(docs)
-
-print(f"\nTotal pages: {len(documents)}")
-
-# -----------------------------
-# Split into chunks
-# -----------------------------
-splitter = RecursiveCharacterTextSplitter(
-    chunk_size=1000,
-    chunk_overlap=200,
+header_splitter = MarkdownHeaderTextSplitter(
+    headers_to_split_on=headers_to_split_on
 )
 
-chunks = splitter.split_documents(documents)
+text_splitter = RecursiveCharacterTextSplitter(
+    chunk_size=500,
+    chunk_overlap=100,
+)
 
-print(f"Total chunks: {len(chunks)}")
+documents = []
 
-# -----------------------------
-# Create FAISS
-# -----------------------------
-print("\nCreating embeddings...")
+for file in os.listdir(MD_FOLDER):
 
-vectorstore = FAISS.from_documents(chunks, embeddings)
+    if not file.endswith(".md"):
+        continue
 
-os.makedirs(FAISS_FOLDER, exist_ok=True)
+    path = os.path.join(MD_FOLDER, file)
 
+    with open(path, "r", encoding="utf-8") as f:
+        markdown = f.read()
+
+    # Split by headings
+    header_docs = header_splitter.split_text(markdown)
+
+    # Split long sections only
+    chunks = text_splitter.split_documents(header_docs)
+
+    for doc in chunks:
+
+        headers = []
+
+        if "H1" in doc.metadata:
+            headers.append(doc.metadata["H1"])
+
+        if "H2" in doc.metadata:
+            headers.append(doc.metadata["H2"])
+
+        if "H3" in doc.metadata:
+            headers.append(doc.metadata["H3"])
+
+        # Add headings to page content
+        doc.page_content = (
+            "\n".join(headers)
+            + "\n\n"
+            + doc.page_content
+        )
+
+        doc.metadata["source_file"] = file
+
+    documents.extend(chunks)
+
+print(f"Total chunks: {len(documents)}")
+
+# DEBUG
+for i, doc in enumerate(documents):
+    print("=" * 80)
+    print(doc.metadata)
+    print(doc.page_content)
+
+for doc in documents:
+    if "House" in doc.page_content:
+        print("helooo-----------------------")
+        print("=" * 80)
+        print(doc.metadata)
+        print(doc.page_content)
+vectorstore = FAISS.from_documents(documents, embeddings)
 vectorstore.save_local(FAISS_FOLDER)
-
-print("\nKnowledge Base created successfully!")
-print(f"Saved at: {FAISS_FOLDER}")
